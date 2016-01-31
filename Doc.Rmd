@@ -1,0 +1,123 @@
+---
+title: "Qualitative Assessment of Exercise Activity"
+author: "John Howard"
+date: "Wednesday, January 27, 2016"
+output: html_document
+---
+
+## Background
+
+Using devices such as Jawbone Up, Nike FuelBand, and Fitbit it is now possible to collect a large amount of data about personal activity relatively inexpensively. One thing that people regularly do is quantify how much of a particular activity they do, but they rarely quantify how well they do it. In this project, the goal will be to use data from accelerometers on the belt, forearm, arm, and dumbell of 6 participants. They were asked to perform barbell lifts correctly and incorrectly in 5 different ways. More information is available from the website here: http://groupware.les.inf.puc-rio.br/har (see the section on the Weight Lifting Exercise Dataset).
+
+The data for this project comes from this source: http://groupware.les.inf.puc-rio.br/har. Many thanks to the Groupware@LES project as they have been very generous in allowing their data to be used for this assignment.
+
+
+## Data
+
+The training data for this project are available here:
+
+https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv
+
+The test data are available here:
+
+https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv
+
+Load this data
+```{r setup, include=FALSE}
+setwd("/Temp/MLProject/")
+if (!file.exists("pml-training.csv")) {
+    url <- "https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv"
+    download.file(url = url, destfile = "pml-training.csv")
+    
+}
+
+if (!file.exists("pml-testing.csv")) {
+    url <- "https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv"
+    download.file(url = url, destfile = "pml-testing.csv")
+}
+
+library(caret)
+library(doParallel)
+```
+
+```{r}
+# Load the data: 
+dat <- read.csv("pml-training.csv",na.strings=c("","NA","#DIV/0!"))
+dim(dat)
+
+# The test data is a sample provided which has now "Y" values. We will test our final model with this and submit the answers
+test <- read.csv("pml-testing.csv",na.strings=c("","NA","#DIV/0!"))
+dim(test)
+# Looking at the data we can see there are a lot of features (160) and many of them are null. It was decided that we could remove columns with any NA values:
+dat<-dat[,colSums(is.na(dat))==0]
+test<-test[,colSums(is.na(test))==0]
+
+# We can see also that the first seven columns are timestamp or descriptive data that will not contribute the assessment of the movement quality so we remove them: 
+dat<-dat[,-c(1:7)]
+test<-test[,-c(1:7)]
+dim(dat)
+```
+Now we have 52 features which is still quite large but more manageable. 
+
+## Model Selection 
+I decided that I would consider both Random Forest and Boosting approaches. To compare the two approaches we will perform holdback validation on the supplied training data by partitioning it further:  
+
+```{r, message=FALSE}
+# Hold back  validation
+set.seed(123)
+inTrain <- createDataPartition(dat$classe, p = .75, list = FALSE)
+training <- dat[ inTrain,]
+testing  <- dat[-inTrain,]
+
+# 5-fold Cross Validation performed
+trCtrl <- trainControl( method = "cv", number = 5)
+
+# Parallel Random Forest
+registerDoParallel(6)
+modelrf <- train(classe~., data=training, trControl = trCtrl, method="parRF" )
+# closeAllConnections()
+print(modelrf$finalModel)
+
+# Now test this on the holdback validation set:
+predrf <- predict(modelrf, newdata=testing)
+confusionMatrix(predrf, testing$classe)
+```
+
+```{r, message=FALSE}
+# Boosting - use same cross validation
+modelgbm <- train(classe~., data=training, trControl = trCtrl, method="gbm", verbose=FALSE )
+print(modelgbm$finalModel)
+
+# Now test this on the holdback validation set:
+predgbm <- predict(modelgbm, newdata=testing)
+confusionMatrix(predgbm, testing$classe)
+```
+We can see that, in this case, Random Forest provides better accuracy (99.33% vs 96.13%)so it was decided we would continue with this.
+
+## Final Model derivation
+We now apply the Random Forest model to the complete dataset:
+```{r, message=FALSE}
+# 5-fold Cross Validation performed
+trCtrl <- trainControl( method = "cv", number = 5)
+
+# Parallel RF on dat
+modelrftot <- train(classe~., data=dat, trControl = trCtrl, method="parRF" )
+print(modelrftot$finalModel)
+
+# Now use this model to predict answers for the supplied training set:
+finalpred <- predict(modelrftot, newdata=test)
+print(finalpred)
+```
+
+## Conclusions
+
+* Having chosen a Random Forest with 4 fold cross validation we were able to produce a very successful model with an out of sample error estimate of less than 1% This resulted in getting 20/20 answers correct for the final quiz.  
+* Interesting that RF should be the more successful approach as the initial research found that Adaboosting was the best. Possibly there are improvements to be made over the out-of-box "gbm" boosting that I performed here.  
+* I shouldn't have been surprised by the the amount of time it took to compute these models but I was glad to have the option of running in parallel. My PC has 8 cores and when running fully parallel it got quite hot. I may need to look at my cooling set-up.  
+* I did look at approaches for feature reduction (not included here). PCA suggested I could retain 95% of the variance with just 25 variables. I also looked at the caret rfe package which also seemed to suggest that you only really needed 20-30 variables to capture most of the predicatability. But I wasn't really sure what I was doing so I haven't included it.
+
+
+
+
+
+
